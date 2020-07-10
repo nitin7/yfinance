@@ -21,17 +21,20 @@
 
 from __future__ import print_function
 
-# import time as _time
 import datetime as _datetime
-import requests as _requests
-import pandas as _pd
-# import numpy as _np
-
-# import json as _json
-# import re as _re
 from collections import namedtuple as _namedtuple
 
+import pandas as _pd
+import requests
+from requests.packages.urllib3.util.retry import Retry
+
 from .base import TickerBase
+from .utils import TimeoutHTTPAdapter
+
+# Create robust request session object
+retries = Retry(total=3, backoff_factor=1, status_forcelist=[429, 500, 502, 503, 504, 404])
+http = requests.Session()
+http.mount("https://", TimeoutHTTPAdapter(max_retries=retries, timeout=2))
 
 
 class Ticker(TickerBase):
@@ -53,7 +56,9 @@ class Ticker(TickerBase):
                 proxy = proxy["https"]
             proxy = {"https": proxy}
 
-        r = _requests.get(url=url, proxies=proxy).json()
+        resp = http.get(url=url, proxies=proxy)
+        r = resp.json()
+
         if r['optionChain']['result']:
             for exp in r['optionChain']['result'][0]['expirationDates']:
                 self._expirations[_datetime.datetime.fromtimestamp(

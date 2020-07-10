@@ -21,12 +21,15 @@
 
 from __future__ import print_function
 
-import requests as _requests
 import re as _re
-import pandas as _pd
-import numpy as _np
 import sys as _sys
-import re as _re
+
+import numpy as _np
+import pandas as _pd
+import requests as _requests
+from requests.adapters import HTTPAdapter
+
+DEFAULT_TIMEOUT = 5
 
 try:
     import ujson as _json
@@ -162,7 +165,7 @@ def parse_actions(data, tz=None):
             if tz is not None:
                 splits.index = splits.index.tz_localize(tz)
             splits["Stock Splits"] = splits["numerator"] / \
-                splits["denominator"]
+                                     splits["denominator"]
             splits = splits["Stock Splits"]
 
     return dividends, splits
@@ -208,11 +211,26 @@ class ProgressBar:
         all_full = self.width - 2
         num_hashes = int(round((percent_done / 100.0) * all_full))
         self.prog_bar = '[' + self.fill_char * \
-            num_hashes + ' ' * (all_full - num_hashes) + ']'
+                        num_hashes + ' ' * (all_full - num_hashes) + ']'
         pct_place = (len(self.prog_bar) // 2) - len(str(percent_done))
         pct_string = '%d%%' % percent_done
         self.prog_bar = self.prog_bar[0:pct_place] + \
-            (pct_string + self.prog_bar[pct_place + len(pct_string):])
+                        (pct_string + self.prog_bar[pct_place + len(pct_string):])
 
     def __str__(self):
         return str(self.prog_bar)
+
+
+class TimeoutHTTPAdapter(HTTPAdapter):
+    def __init__(self, *args, **kwargs):
+        self.timeout = DEFAULT_TIMEOUT
+        if "timeout" in kwargs:
+            self.timeout = kwargs["timeout"]
+            del kwargs["timeout"]
+        super().__init__(*args, **kwargs)
+
+    def send(self, request, **kwargs):
+        timeout = kwargs.get("timeout")
+        if timeout is None:
+            kwargs["timeout"] = self.timeout
+        return super().send(request, **kwargs)
