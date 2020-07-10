@@ -194,7 +194,6 @@ class Ticker(TickerBase):
     def sustainability(self):
         return self.get_sustainability()
 
-    @property
     def options(self, proxy=None):
         if not self._expirations:
             self._download_options(proxy=proxy)
