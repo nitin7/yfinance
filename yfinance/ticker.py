@@ -195,7 +195,7 @@ class Ticker(TickerBase):
         return self.get_sustainability()
 
     @property
-    def options(self):
+    def options(self, proxy=None):
         if not self._expirations:
-            self._download_options()
+            self._download_options(proxy=proxy)
         return tuple(self._expirations.keys())
