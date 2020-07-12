@@ -56,7 +56,7 @@ class Ticker(TickerBase):
                 proxy = {"https": proxy}
 
             # Get options from api
-            url = "{}/v7/finance/options/{}?date={}?getAllData=true".format(self._base_url, self.ticker, date)
+            url = "{}/v7/finance/options/{}?getAllData=true".format(self._base_url, self.ticker, date)
             resp = http.get(url=url, proxies=proxy)
             r = resp.json()
             result = r['optionChain']['result']
