@@ -124,7 +124,7 @@ class Ticker(TickerBase):
             resp = http.get(url=url).json()
             result = resp['quoteSummary']['result'][0]
             if result['price']:
-                self._quote = result['quote']
+                self._quote = result['price']
             else:
                 raise TickerException('Unable to fetch quote for ticker {}: {}'.format(self.ticker, resp))
         return self._quote
