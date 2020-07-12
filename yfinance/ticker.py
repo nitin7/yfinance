@@ -59,12 +59,12 @@ class Ticker(TickerBase):
             url = "{}/v7/finance/options/{}?getAllData=true".format(self._base_url, self.ticker, date)
             resp = http.get(url=url, proxies=proxy)
             r = resp.json()
-            result = r['optionChain']['result']
+            result = r['optionChain']['result'][0]
             if result:
-                for exp in result[0]['expirationDates']:
+                for exp in result['expirationDates']:
                     # TODO: Don't populate expirations greater than three years from now (ex. TWTR has 2026 expiries with no data)
                     self._expirations[_datetime.datetime.fromtimestamp(exp).strftime('%Y-%m-%d')] = exp
-                self._options = r['options']
+                self._options = result['options']
             else:
                 raise TickerException('Options response empty for ticker {}: {}'.format(self.ticker, r))
 
