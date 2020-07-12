@@ -118,6 +118,18 @@ class Ticker(TickerBase):
     # ------------------------
 
     @property
+    def quote(self):
+        if not self._quote:
+            url = "{}/v10/finance/quoteSummary/{}?modules=price".format(self._base_url, self.ticker)
+            resp = http.get(url=url).json()
+            result = resp['quoteSummary']['result'][0]
+            if result['price']:
+                self._quote = result['quote']
+            else:
+                raise TickerException('Unable to fetch quote for ticker {}: {}'.format(self.ticker, resp))
+        return self._quote
+
+    @property
     def isin(self):
         return self.get_isin()
 
