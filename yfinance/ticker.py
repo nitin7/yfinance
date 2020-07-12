@@ -30,10 +30,11 @@ from requests.packages.urllib3.util.retry import Retry
 
 from .base import TickerBase
 from .utils import TimeoutHTTPAdapter
+from torpy.http.requests import tor_requests_session
 
 # Create robust request session object
 retries = Retry(total=3, backoff_factor=1, status_forcelist=[429, 500, 502, 503, 504, 404])
-http = requests.Session()
+http = tor_requests_session() # requests.Session()
 http.mount("https://", TimeoutHTTPAdapter(max_retries=retries, timeout=10, pool_connections=100, pool_maxsize=100))
 
 
