@@ -45,7 +45,7 @@ class TickerBase():
     def __init__(self, ticker):
         self.ticker = ticker.upper()
         self._history = None
-        self._base_url = 'https://query1.finance.yahoo.com'
+        self._base_url = 'https://query2.finance.yahoo.com'
         self._scrape_url = 'https://finance.yahoo.com/quote'
 
         self._fundamentals = False
@@ -58,6 +58,7 @@ class TickerBase():
 
         self._calendar = None
         self._expirations = {}
+        self._options = []
 
         self._earnings = {
             "yearly": utils.empty_df(),

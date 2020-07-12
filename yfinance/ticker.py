@@ -37,34 +37,41 @@ http = requests.Session()
 http.mount("https://", TimeoutHTTPAdapter(max_retries=retries, timeout=10, pool_connections=100, pool_maxsize=100))
 
 
+class TickerException(Exception):
+    pass
+
+
 class Ticker(TickerBase):
 
     def __repr__(self):
         return 'yfinance.Ticker object <%s>' % self.ticker
 
     def _download_options(self, date=None, proxy=None):
-        if date is None:
-            url = "{}/v7/finance/options/{}".format(
-                self._base_url, self.ticker)
-        else:
-            url = "{}/v7/finance/options/{}?date={}".format(
-                self._base_url, self.ticker, date)
 
-        # setup proxy in requests format
-        if proxy is not None:
-            if isinstance(proxy, dict) and "https" in proxy:
-                proxy = proxy["https"]
-            proxy = {"https": proxy}
+        if not self._options:
+            # Setup proxy in requests format
+            if proxy is not None:
+                if isinstance(proxy, dict) and "https" in proxy:
+                    proxy = proxy["https"]
+                proxy = {"https": proxy}
 
-        resp = http.get(url=url, proxies=proxy)
-        r = resp.json()
+            # Get options from api
+            url = "{}/v7/finance/options/{}?date={}?getAllData=true".format(self._base_url, self.ticker, date)
+            resp = http.get(url=url, proxies=proxy)
+            r = resp.json()
+            result = r['optionChain']['result']
+            if result:
+                for exp in result[0]['expirationDates']:
+                    # TODO: Don't populate expirations greater than three years from now (ex. TWTR has 2026 expiries with no data)
+                    self._expirations[_datetime.datetime.fromtimestamp(exp).strftime('%Y-%m-%d')] = exp
+                self._options = r['options']
+            else:
+                raise TickerException('Options response empty for ticker {}: {}'.format(self.ticker, r))
 
-        if r['optionChain']['result']:
-            for exp in r['optionChain']['result'][0]['expirationDates']:
-                self._expirations[_datetime.datetime.fromtimestamp(
-                    exp).strftime('%Y-%m-%d')] = exp
-            return r['optionChain']['result'][0]['options'][0]
-        return {}
+        if not self._options:
+            raise TickerException('Options empty for ticker {}'.format(self.ticker))
+
+        return self._options[0] if date is None else self._options[self._expirations.index(date)]
 
     def _options2df(self, opt, tz=None):
         data = _pd.DataFrame(opt).reindex(columns=[
