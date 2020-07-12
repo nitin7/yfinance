@@ -56,7 +56,7 @@ class Ticker(TickerBase):
                 proxy = {"https": proxy}
 
             # Get options from api
-            url = "{}/v7/finance/options/{}?getAllData=true".format(self._base_url, self.ticker, date)
+            url = "{}/v7/finance/options/{}?getAllData=true".format(self._base_url, self.ticker.replace('.', '-'), date) # replace . in ticker with - to get data (ex. RDS.B, BRK.B)
             resp = http.get(url=url, proxies=proxy)
             r = resp.json()
             result = r['optionChain']['result'][0]
@@ -120,7 +120,7 @@ class Ticker(TickerBase):
     @property
     def quote(self):
         if not self._quote:
-            url = "{}/v10/finance/quoteSummary/{}?modules=price".format(self._base_url, self.ticker)
+            url = "{}/v10/finance/quoteSummary/{}?modules=price".format(self._base_url, self.ticker.replace('.', '-'))
             resp = http.get(url=url).json()
             result = resp['quoteSummary']['result'][0]
             if result['price']:
