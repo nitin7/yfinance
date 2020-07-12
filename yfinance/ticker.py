@@ -71,7 +71,7 @@ class Ticker(TickerBase):
         if not self._options:
             raise TickerException('Options empty for ticker {}'.format(self.ticker))
 
-        return self._options[0] if date is None else self._options[self._expirations.index(date)]
+        return self._options[0] if date is None else self._options[list(self._expirations.values()).index(date)]
 
     def _options2df(self, opt, tz=None):
         data = _pd.DataFrame(opt).reindex(columns=[
