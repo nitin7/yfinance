@@ -22,6 +22,7 @@
 from __future__ import print_function
 
 import datetime as _datetime
+import time
 from collections import namedtuple as _namedtuple
 
 import pandas as _pd
@@ -62,7 +63,9 @@ class Ticker(TickerBase):
             result = r['optionChain']['result'][0]
             if result:
                 for exp in result['expirationDates']:
-                    # TODO: Don't populate expirations greater than three years from now (ex. TWTR has 2026 expiries with no data)
+                    # Don't populate expirations greater than three years from now (ex. TWTR has 2026 expiries with no data)
+                    if (exp - time.time()) > (3600 * 24 * 365 * 3):
+                        continue
                     self._expirations[_datetime.datetime.fromtimestamp(exp).strftime('%Y-%m-%d')] = exp
                 self._options = result['options']
             else:
