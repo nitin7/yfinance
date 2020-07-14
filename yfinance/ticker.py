@@ -35,7 +35,7 @@ from .utils import TimeoutHTTPAdapter
 # Create robust request session object
 retries = Retry(total=3, backoff_factor=1, status_forcelist=[429, 500, 502, 503, 504, 404])
 http = requests.Session()
-http.mount("https://", TimeoutHTTPAdapter(max_retries=retries, timeout=10, pool_connections=100, pool_maxsize=100))
+http.mount("https://", TimeoutHTTPAdapter(max_retries=retries, timeout=30, pool_connections=100, pool_maxsize=100))
 
 
 class TickerException(Exception):
