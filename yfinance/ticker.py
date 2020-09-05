@@ -47,6 +47,19 @@ class Ticker(TickerBase):
     def __repr__(self):
         return 'yfinance.Ticker object <%s>' % self.ticker
 
+    def _filter_outdated_contracts(self, options):
+        # Filter out contracts with lastTradeDate greater than 3 days
+        def filter_outdated(contract):
+            return (time.time() - contract['lastTradeDate']) < (3600 * 24 * 3)
+
+        for option in options:
+            initial_contract_count = len(option['calls'] + option['puts'])
+            option['calls'] = list(filter(filter_outdated, option['calls']))
+            option['puts'] = list(filter(filter_outdated, option['puts']))
+            filtered_contract_count = len(option['calls'] + option['puts'])
+            # print('Filtered {} outdated contracts'.format(initial_contract_count - filtered_contract_count))
+        return options
+
     def _download_options(self, date=None, proxy=None):
 
         if not self._options:
@@ -57,7 +70,8 @@ class Ticker(TickerBase):
                 proxy = {"https": proxy}
 
             # Get options from api
-            url = "{}/v7/finance/options/{}?getAllData=true".format(self._base_url, self.ticker.replace('.', '-'), date) # replace . in ticker with - to get data (ex. RDS.B, BRK.B)
+            url = "{}/v7/finance/options/{}?getAllData=true".format(self._base_url, self.ticker.replace('.', '-'),
+                                                                    date)  # replace . in ticker with - to get data (ex. RDS.B, BRK.B)
             resp = http.get(url=url, proxies=proxy)
             r = resp.json()
             result = r['optionChain']['result'][0]
@@ -67,7 +81,7 @@ class Ticker(TickerBase):
                     if (exp - time.time()) > (3600 * 24 * 365 * 3):
                         continue
                     self._expirations[_datetime.datetime.fromtimestamp(exp).strftime('%Y-%m-%d')] = exp
-                self._options = result['options']
+                self._options = self._filter_outdated_contracts(result['options'])
             else:
                 raise TickerException('Options response empty for ticker {}: {}'.format(self.ticker, r))
 
