@@ -48,9 +48,9 @@ class Ticker(TickerBase):
         return 'yfinance.Ticker object <%s>' % self.ticker
 
     def _filter_outdated_contracts(self, options):
-        # Filter out contracts with lastTradeDate greater than 3 days
+        # Filter out contracts with lastTradeDate greater than 4 days
         def filter_outdated(contract):
-            return (time.time() - contract['lastTradeDate']) < (3600 * 24 * 3)
+            return (time.time() - contract['lastTradeDate']) < (3600 * 24 * 4)
 
         for option in options:
             initial_contract_count = len(option['calls'] + option['puts'])
