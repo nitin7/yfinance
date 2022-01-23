@@ -36,6 +36,7 @@ from .utils import TimeoutHTTPAdapter
 # Create robust request session object
 retries = Retry(total=3, backoff_factor=1, status_forcelist=[429, 500, 502, 503, 504, 404])
 http = requests.Session()
+http.headers = {'User-Agent': 'Mozilla/5.0'}
 http.mount("https://", TimeoutHTTPAdapter(max_retries=retries, timeout=30, pool_connections=100, pool_maxsize=100))
 
 
@@ -117,7 +118,7 @@ class Ticker(TickerBase):
         if date is None:
             options = self._download_options(proxy=proxy)
         else:
-            if not self._expirations:
+            if not hasattr(self, '_expirations') or not self._expirations:
                 self._download_options()
             if date not in self._expirations:
                 raise ValueError(
@@ -136,7 +137,7 @@ class Ticker(TickerBase):
 
     @property
     def quote(self):
-        if not self._quote:
+        if not hasattr(self, '_quote') or not self._quote:
             url = "{}/v10/finance/quoteSummary/{}?modules=price".format(self._base_url, self.ticker.replace('.', '-'))
             resp = http.get(url=url).json()
             result = resp['quoteSummary']['result'][0]
