@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 #
-# Yahoo! Finance market data downloader (+fix for Pandas Datareader)
+# yfinance - market data downloader
 # https://github.com/ranaroussi/yfinance
 #
 # Copyright 2017-2019 Ran Aroussi
@@ -22,19 +22,7 @@
 from __future__ import print_function
 
 from . import Ticker, multi
-from collections import namedtuple as _namedtuple
-
-
-def genTickers(tickers):
-    tickers = tickers if isinstance(
-        tickers, list) else tickers.replace(',', ' ').split()
-    tickers = [ticker.upper() for ticker in tickers]
-    ticker_objects = {}
-
-    for ticker in tickers:
-        ticker_objects[ticker] = Ticker(ticker)
-    return _namedtuple("Tickers", ticker_objects.keys()
-                       )(*ticker_objects.values())
+# from collections import namedtuple as _namedtuple
 
 
 class Tickers():
@@ -51,28 +39,29 @@ class Tickers():
         for ticker in self.symbols:
             ticker_objects[ticker] = Ticker(ticker)
 
-        self.tickers = _namedtuple(
-            "Tickers", ticker_objects.keys(), rename=True
-        )(*ticker_objects.values())
+        self.tickers = ticker_objects
+        # self.tickers = _namedtuple(
+        #     "Tickers", ticker_objects.keys(), rename=True
+        # )(*ticker_objects.values())
 
     def history(self, period="1mo", interval="1d",
                 start=None, end=None, prepost=False,
                 actions=True, auto_adjust=True, proxy=None,
                 threads=True, group_by='column', progress=True,
-                **kwargs):
+                timeout=None, **kwargs):
 
         return self.download(
                 period, interval,
                 start, end, prepost,
                 actions, auto_adjust, proxy,
                 threads, group_by, progress,
-                **kwargs)
+                timeout, **kwargs)
 
     def download(self, period="1mo", interval="1d",
                  start=None, end=None, prepost=False,
                  actions=True, auto_adjust=True, proxy=None,
                  threads=True, group_by='column', progress=True,
-                 **kwargs):
+                 timeout=None, **kwargs):
 
         data = multi.download(self.symbols,
                               start=start, end=end,
@@ -85,10 +74,11 @@ class Tickers():
                               group_by='ticker',
                               threads=threads,
                               progress=progress,
+                              timeout=timeout,
                               **kwargs)
 
         for symbol in self.symbols:
-            getattr(self.tickers, symbol)._history = data[symbol]
+            self.tickers.get(symbol, {})._history = data[symbol]
 
         if group_by == 'column':
             data.columns = data.columns.swaplevel(0, 1)

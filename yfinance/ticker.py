@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 #
-# Yahoo! Finance market data downloader (+fix for Pandas Datareader)
+# yfinance - market data downloader
 # https://github.com/ranaroussi/yfinance
 #
 # Copyright 2017-2019 Ran Aroussi
@@ -29,6 +29,7 @@ import pandas as _pd
 import requests
 from requests.packages.urllib3.util.retry import Retry
 
+from . import utils
 from .base import TickerBase
 from .utils import TimeoutHTTPAdapter
 
@@ -61,34 +62,33 @@ class Ticker(TickerBase):
         return options
 
     def _download_options(self, date=None, proxy=None):
+        if date is None:
+            url = "{}/v7/finance/options/{}".format(
+                self._base_url, self.ticker)
+        else:
+            url = "{}/v7/finance/options/{}?date={}".format(
+                self._base_url, self.ticker, date)
 
-        if not self._options:
-            # Setup proxy in requests format
-            if proxy is not None:
-                if isinstance(proxy, dict) and "https" in proxy:
-                    proxy = proxy["https"]
-                proxy = {"https": proxy}
+        # setup proxy in requests format
+        if proxy is not None:
+            if isinstance(proxy, dict) and "https" in proxy:
+                proxy = proxy["https"]
+            proxy = {"https": proxy}
 
-            # Get options from api
-            url = "{}/v7/finance/options/{}?getAllData=true".format(self._base_url, self.ticker.replace('.', '-'),
-                                                                    date)  # replace . in ticker with - to get data (ex. RDS.B, BRK.B)
-            resp = http.get(url=url, proxies=proxy)
-            r = resp.json()
-            result = r['optionChain']['result'][0]
-            if result:
-                for exp in result['expirationDates']:
-                    # Don't populate expirations greater than three years from now (ex. TWTR has 2026 expiries with no data)
-                    if (exp - time.time()) > (3600 * 24 * 365 * 3):
-                        continue
-                    self._expirations[_datetime.datetime.fromtimestamp(exp).strftime('%Y-%m-%d')] = exp
-                self._options = self._filter_outdated_contracts(result['options'])
-            else:
-                raise TickerException('Options response empty for ticker {}: {}'.format(self.ticker, r))
-
-        if not self._options:
-            raise TickerException('Options empty for ticker {}'.format(self.ticker))
-
-        return self._options[0] if date is None else self._options[list(self._expirations.values()).index(date)]
+        r = _requests.get(
+            url=url,
+            proxies=proxy,
+            headers=utils.user_agent_headers
+        ).json()
+        if len(r.get('optionChain', {}).get('result', [])) > 0:
+            for exp in r['optionChain']['result'][0]['expirationDates']:
+                # Don't populate expirations greater than three years from now (ex. TWTR has 2026 expiries with no data)
+                if (exp - time.time()) > (3600 * 24 * 365 * 3):
+                    continue
+                self._expirations[_datetime.datetime.utcfromtimestamp(
+                    exp).strftime('%Y-%m-%d')] = exp
+            opt = r['optionChain']['result'][0].get('options', [])
+            return opt[0] if len(opt) > 0 else []
 
     def _options2df(self, opt, tz=None):
         data = _pd.DataFrame(opt).reindex(columns=[
@@ -108,9 +108,9 @@ class Ticker(TickerBase):
             'currency'])
 
         data['lastTradeDate'] = _pd.to_datetime(
-            data['lastTradeDate'], unit='s')
+            data['lastTradeDate'], unit='s', utc=True)
         if tz is not None:
-            data['lastTradeDate'] = data['lastTradeDate'].tz_localize(tz)
+            data['lastTradeDate'] = data['lastTradeDate'].dt.tz_convert(tz)
         return data
 
     def option_chain(self, date=None, proxy=None, tz=None):
@@ -159,8 +159,8 @@ class Ticker(TickerBase):
         return self.get_institutional_holders()
 
     @property
-    def dividends(self):
-        return self.get_dividends()
+    def mutualfund_holders(self):
+        return self.get_mutualfund_holders()
 
     @property
     def dividends(self):
@@ -173,6 +173,10 @@ class Ticker(TickerBase):
     @property
     def actions(self):
         return self.get_actions()
+
+    @property
+    def shares(self):
+        return self.get_shares()
 
     @property
     def info(self):
@@ -234,3 +238,11 @@ class Ticker(TickerBase):
         if not self._expirations:
             self._download_options(proxy=proxy)
         return tuple(self._expirations.keys())
+
+    @property
+    def news(self):
+        return self.get_news()
+
+    @property
+    def analysis(self):
+        return self.get_analysis()
