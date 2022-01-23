@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 #
-# Yahoo! Finance market data downloader (+fix for Pandas Datareader)
+# yfinance - market data downloader
 # https://github.com/ranaroussi/yfinance
 #
 # Copyright 2017-2019 Ran Aroussi
@@ -26,6 +26,7 @@ import datetime as _datetime
 import requests as _requests
 import pandas as _pd
 import numpy as _np
+import re as _re
 
 try:
     from urllib.parse import quote as urlencode
@@ -34,29 +35,34 @@ except ImportError:
 
 from . import utils
 
-# import json as _json
+import json as _json
 # import re as _re
 # import sys as _sys
 
 from . import shared
 
+_BASE_URL_ = 'https://query2.finance.yahoo.com'
+_SCRAPE_URL_ = 'https://finance.yahoo.com/quote'
 
 class TickerBase():
     def __init__(self, ticker, session=None):
         self.ticker = ticker.upper()
         self.session = session or _requests
         self._history = None
-        self._base_url = 'https://query1.finance.yahoo.com'
-        self._scrape_url = 'https://finance.yahoo.com/quote'
+        self._base_url = _BASE_URL_
+        self._scrape_url = _SCRAPE_URL_
 
         self._fundamentals = False
         self._info = None
+        self._analysis = None
         self._sustainability = None
         self._recommendations = None
         self._major_holders = None
         self._institutional_holders = None
         self._mutualfund_holders = None
         self._isin = None
+        self._news = []
+        self._shares = None
 
         self._calendar = None
         self._expirations = {}
@@ -74,10 +80,30 @@ class TickerBase():
             "yearly": utils.empty_df(),
             "quarterly": utils.empty_df()}
 
+        # accept isin as ticker
+        if utils.is_isin(self.ticker):
+            self.ticker = utils.get_ticker_by_isin(self.ticker, None, session)
+
+    def stats(self, proxy=None):
+        # setup proxy in requests format
+        if proxy is not None:
+            if isinstance(proxy, dict) and "https" in proxy:
+                proxy = proxy["https"]
+            proxy = {"https": proxy}
+
+        if self._fundamentals:
+            return
+
+        ticker_url = "{}/{}".format(self._scrape_url, self.ticker)
+
+        # get info and sustainability
+        data = utils.get_json(ticker_url, proxy, self.session)
+        return data
+
     def history(self, period="1mo", interval="1d",
                 start=None, end=None, prepost=False, actions=True,
                 auto_adjust=True, back_adjust=False,
-                proxy=None, rounding=False, tz=None, **kwargs):
+                proxy=None, rounding=False, tz=None, timeout=None, **kwargs):
         """
         :Parameters:
             period : str
@@ -107,6 +133,10 @@ class TickerBase():
             tz: str
                 Optional timezone locale for dates.
                 (default data is returned as non-localized dates)
+            timeout: None or float
+                If not None stops waiting for a response after given number of
+                seconds. (Can also be a fraction of a second e.g. 0.01)
+                Default is None.
             **kwargs: dict
                 debug: bool
                     Optional. If passed as False, will suppress
@@ -115,7 +145,7 @@ class TickerBase():
 
         if start or period is None or period.lower() == "max":
             if start is None:
-                start = -2208988800
+                start = -631159200
             elif isinstance(start, _datetime.datetime):
                 start = int(_time.mktime(start.timetuple()))
             else:
@@ -149,12 +179,27 @@ class TickerBase():
 
         # Getting data from json
         url = "{}/v8/finance/chart/{}".format(self._base_url, self.ticker)
-        data = self.session.get(url=url, params=params, proxies=proxy)
-        if "Will be right back" in data.text:
-            raise RuntimeError("*** YAHOO! FINANCE IS CURRENTLY DOWN! ***\n"
-                               "Our engineers are working quickly to resolve "
-                               "the issue. Thank you for your patience.")
-        data = data.json()
+
+        session = self.session or _requests
+
+        data = None
+
+        try:
+            data = session.get(
+                url=url,
+                params=params,
+                proxies=proxy,
+                headers=utils.user_agent_headers,
+                timeout=timeout
+            )
+            if "Will be right back" in data.text or data is None:
+                raise RuntimeError("*** YAHOO! FINANCE IS CURRENTLY DOWN! ***\n"
+                                   "Our engineers are working quickly to resolve "
+                                   "the issue. Thank you for your patience.")
+
+            data = data.json()
+        except Exception:
+            pass
 
         # Work with errors
         debug_mode = True
@@ -162,6 +207,14 @@ class TickerBase():
             debug_mode = kwargs["debug"]
 
         err_msg = "No data found for this date range, symbol may be delisted"
+
+        if data is None or not type(data) is dict or 'status_code' in data.keys():
+            shared._DFS[self.ticker] = utils.empty_df()
+            shared._ERRORS[self.ticker] = err_msg
+            if "many" not in kwargs and debug_mode:
+                print('- %s: %s' % (self.ticker, err_msg))
+            return utils.empty_df()
+
         if "chart" in data and data["chart"]["error"]:
             err_msg = data["chart"]["error"]["description"]
             shared._DFS[self.ticker] = utils.empty_df()
@@ -208,10 +261,20 @@ class TickerBase():
             except Exception:
                 pass
 
-        if auto_adjust:
-            quotes = utils.auto_adjust(quotes)
-        elif back_adjust:
-            quotes = utils.back_adjust(quotes)
+        try:
+            if auto_adjust:
+                quotes = utils.auto_adjust(quotes)
+            elif back_adjust:
+                quotes = utils.back_adjust(quotes)
+        except Exception as e:
+            if auto_adjust:
+                err_msg = "auto_adjust failed with %s" % e
+            else:
+                err_msg = "back_adjust failed with %s" % e
+            shared._DFS[self.ticker] = utils.empty_df()
+            shared._ERRORS[self.ticker] = err_msg
+            if "many" not in kwargs and debug_mode:
+                print('- %s: %s' % (self.ticker, err_msg))
 
         if rounding:
             quotes = _np.round(quotes, data[
@@ -241,6 +304,10 @@ class TickerBase():
             if tz is not None:
                 df.index = df.index.tz_localize(tz)
             df.index.name = "Date"
+
+        # duplicates and missing rows cleanup
+        df.dropna(how='all', inplace=True)
+        df = df[~df.index.duplicated(keep='first')]
 
         self._history = df.copy()
 
@@ -286,40 +353,39 @@ class TickerBase():
 
         # holders
         try:
-            resp = self.session.get(ticker_url + '/holders')
-            resp.raise_for_status()
-            holders = _pd.read_html(resp.content)
-        except Exception as e:
+            resp = utils.get_html(ticker_url + '/holders', proxy, self.session)
+            holders = _pd.read_html(resp)
+        except Exception:
             holders = []
 
-        if len(holders)>=3:
+        if len(holders) >= 3:
             self._major_holders = holders[0]
             self._institutional_holders = holders[1]
             self._mutualfund_holders = holders[2]
-        elif len(holders)>=2:
+        elif len(holders) >= 2:
             self._major_holders = holders[0]
             self._institutional_holders = holders[1]
-        elif len(holders)>=1:
+        elif len(holders) >= 1:
             self._major_holders = holders[0]
 
-        #self._major_holders = holders[0]
-        #self._institutional_holders = holders[1]
+        # self._major_holders = holders[0]
+        # self._institutional_holders = holders[1]
 
         if self._institutional_holders is not None:
             if 'Date Reported' in self._institutional_holders:
                 self._institutional_holders['Date Reported'] = _pd.to_datetime(
-                self._institutional_holders['Date Reported'])
+                    self._institutional_holders['Date Reported'])
             if '% Out' in self._institutional_holders:
                 self._institutional_holders['% Out'] = self._institutional_holders[
-                '% Out'].str.replace('%', '').astype(float)/100
+                    '% Out'].str.replace('%', '').astype(float) / 100
 
         if self._mutualfund_holders is not None:
             if 'Date Reported' in self._mutualfund_holders:
                 self._mutualfund_holders['Date Reported'] = _pd.to_datetime(
-                self._mutualfund_holders['Date Reported'])
+                    self._mutualfund_holders['Date Reported'])
             if '% Out' in self._mutualfund_holders:
                 self._mutualfund_holders['% Out'] = self._mutualfund_holders[
-                '% Out'].str.replace('%', '').astype(float)/100
+                    '% Out'].str.replace('%', '').astype(float) / 100
 
         # sustainability
         d = {}
@@ -343,7 +409,7 @@ class TickerBase():
         # info (be nice to python 2)
         self._info = {}
         try:
-            items = ['summaryProfile', 'summaryDetail', 'quoteType',
+            items = ['summaryProfile', 'financialData', 'quoteType',
                      'defaultKeyStatistics', 'assetProfile', 'summaryDetail']
             for item in items:
                 if isinstance(data.get(item), dict):
@@ -351,10 +417,30 @@ class TickerBase():
         except Exception:
             pass
 
+       # For ETFs, provide this valuable data: the top holdings of the ETF
+        try:
+            if 'topHoldings' in data:
+                self._info.update(data['topHoldings'])
+        except Exception:
+            pass
+
+        try:
+            if not isinstance(data.get('summaryDetail'), dict):
+                # For some reason summaryDetail did not give any results. The price dict usually has most of the same info
+                self._info.update(data.get('price', {}))
+        except Exception:
+            pass
+
         try:
             # self._info['regularMarketPrice'] = self._info['regularMarketOpen']
             self._info['regularMarketPrice'] = data.get('price', {}).get(
-                'regularMarketPrice', self._info['regularMarketOpen'])
+                'regularMarketPrice', self._info.get('regularMarketOpen', None))
+        except Exception:
+            pass
+
+        try:
+            self._info['preMarketPrice'] = data.get('price', {}).get(
+                'preMarketPrice', self._info.get('preMarketPrice', None))
         except Exception:
             pass
 
@@ -393,7 +479,7 @@ class TickerBase():
             pass
 
         # get fundamentals
-        data = utils.get_json(ticker_url+'/financials', proxy, self.session)
+        data = utils.get_json(ticker_url + '/financials', proxy, self.session)
 
         # generic patterns
         for key in (
@@ -405,14 +491,14 @@ class TickerBase():
             if isinstance(data.get(item), dict):
                 try:
                     key[0]['yearly'] = cleanup(data[item][key[2]])
-                except Exception as e:
+                except Exception:
                     pass
 
-            item = key[1]+'HistoryQuarterly'
+            item = key[1] + 'HistoryQuarterly'
             if isinstance(data.get(item), dict):
                 try:
                     key[0]['quarterly'] = cleanup(data[item][key[2]])
-                except Exception as e:
+                except Exception:
                     pass
 
         # earnings
@@ -430,8 +516,83 @@ class TickerBase():
                 df.columns = utils.camel2title(df.columns)
                 df.index.name = 'Quarter'
                 self._earnings['quarterly'] = df
-            except Exception as e:
+            except Exception:
                 pass
+
+        # shares outstanding
+        try:
+            shares = _pd.DataFrame(data['annualBasicAverageShares'])
+            shares['Year'] = shares['asOfDate'].agg(lambda x: int(x[:4]))
+            shares.set_index('Year', inplace=True)
+            shares.drop(columns=['dataId', 'asOfDate', 'periodType', 'currencyCode'], inplace=True)
+            shares.rename(columns={'reportedValue': "BasicShares"}, inplace=True)
+            self._shares = shares
+        except Exception:
+            pass
+
+        # Analysis
+        data = utils.get_json(ticker_url + '/analysis', proxy, self.session)
+
+        if isinstance(data.get('earningsTrend'), dict):
+            try:
+                analysis = _pd.DataFrame(data['earningsTrend']['trend'])
+                analysis['endDate'] = _pd.to_datetime(analysis['endDate'])
+                analysis.set_index('period', inplace=True)
+                analysis.index = analysis.index.str.upper()
+                analysis.index.name = 'Period'
+                analysis.columns = utils.camel2title(analysis.columns)
+
+                dict_cols = []
+
+                for idx, row in analysis.iterrows():
+                    for colname, colval in row.items():
+                        if isinstance(colval, dict):
+                            dict_cols.append(colname)
+                            for k, v in colval.items():
+                                new_colname = colname + ' ' + utils.camel2title([k])[0]
+                                analysis.loc[idx, new_colname] = v
+
+                self._analysis = analysis[[c for c in analysis.columns if c not in dict_cols]]
+            except Exception:
+                pass
+
+        # Complementary key-statistics (currently fetching the important trailingPegRatio which is the value shown in the website)
+        res = {}
+        try:
+            my_headers = {'user-agent': 'curl/7.55.1', 'accept': 'application/json', 'content-type': 'application/json', 'referer': 'https://finance.yahoo.com/', 'cache-control': 'no-cache', 'connection': 'close'}
+            p = _re.compile(r'root\.App\.main = (.*);')
+            r = _requests.session().get('https://finance.yahoo.com/quote/{}/key-statistics?p={}'.format(self.ticker, self.ticker), headers=my_headers)
+            q_results = {}
+            my_qs_keys = ['pegRatio']  # QuoteSummaryStore
+            my_ts_keys = ['trailingPegRatio']  # , 'quarterlyPegRatio']  # QuoteTimeSeriesStore
+
+            # Complementary key-statistics
+            data = _json.loads(p.findall(r.text)[0])
+            key_stats = data['context']['dispatcher']['stores']['QuoteTimeSeriesStore']
+            q_results.setdefault(self.ticker, [])
+            for i in my_ts_keys:
+                # j=0
+                try:
+                    # res = {i: key_stats['timeSeries'][i][1]['reportedValue']['raw']}
+                    # We need to loop over multiple items, if they exist: 0,1,2,..
+                    zzz = key_stats['timeSeries'][i]
+                    for j in range(len(zzz)):
+                        if key_stats['timeSeries'][i][j]:
+                            res = {i: key_stats['timeSeries'][i][j]['reportedValue']['raw']}
+                            q_results[self.ticker].append(res)
+
+                # print(res)
+                # q_results[ticker].append(res)
+                except:
+                    q_results[ticker].append({i: np.nan})
+
+            res = {'Company': ticker}
+            q_results[ticker].append(res)
+        except Exception:
+            pass
+
+        if 'trailingPegRatio' in res:
+            self._info['trailingPegRatio'] = res['trailingPegRatio']
 
         self._fundamentals = True
 
@@ -495,6 +656,13 @@ class TickerBase():
             return dict_data
         return data
 
+    def get_analysis(self, proxy=None, as_dict=False, *args, **kwargs):
+        self._get_fundamentals(proxy=proxy)
+        data = self._analysis
+        if as_dict:
+            return data.to_dict()
+        return data
+
     def get_financials(self, proxy=None, as_dict=False, freq="yearly"):
         self._get_fundamentals(proxy=proxy)
         data = self._financials[freq]
@@ -522,20 +690,33 @@ class TickerBase():
     def get_dividends(self, proxy=None):
         if self._history is None:
             self.history(period="max", proxy=proxy)
-        dividends = self._history["Dividends"]
-        return dividends[dividends != 0]
+        if self._history is not None and "Dividends" in self._history:
+            dividends = self._history["Dividends"]
+            return dividends[dividends != 0]
+        return []
 
     def get_splits(self, proxy=None):
         if self._history is None:
             self.history(period="max", proxy=proxy)
-        splits = self._history["Stock Splits"]
-        return splits[splits != 0]
+        if self._history is not None and "Stock Splits" in self._history:
+            splits = self._history["Stock Splits"]
+            return splits[splits != 0]
+        return []
 
     def get_actions(self, proxy=None):
         if self._history is None:
             self.history(period="max", proxy=proxy)
-        actions = self._history[["Dividends", "Stock Splits"]]
-        return actions[actions != 0].dropna(how='all').fillna(0)
+        if self._history is not None and "Dividends" in self._history and "Stock Splits" in self._history:
+            actions = self._history[["Dividends", "Stock Splits"]]
+            return actions[actions != 0].dropna(how='all').fillna(0)
+        return []
+
+    def get_shares(self, proxy=None, as_dict=False, *args, **kwargs):
+        self._get_fundamentals(proxy=proxy)
+        data = self._shares
+        if as_dict:
+            return data.to_dict()
+        return data
 
     def get_isin(self, proxy=None):
         # *** experimental ***
@@ -562,7 +743,12 @@ class TickerBase():
         url = 'https://markets.businessinsider.com/ajax/' \
               'SearchController_Suggest?max_results=25&query=%s' \
             % urlencode(q)
-        data = self.session.get(url=url, proxies=proxy).text
+        session = self.session or _requests
+        data = session.get(
+            url=url,
+            proxies=proxy,
+            headers=utils.user_agent_headers
+        ).text
 
         search_str = '"{}|'.format(ticker)
         if search_str not in data:
@@ -577,3 +763,31 @@ class TickerBase():
 
         self._isin = data.split(search_str)[1].split('"')[0].split('|')[0]
         return self._isin
+
+    def get_news(self, proxy=None):
+        if self._news:
+            return self._news
+
+        # setup proxy in requests format
+        if proxy is not None:
+            if isinstance(proxy, dict) and "https" in proxy:
+                proxy = proxy["https"]
+            proxy = {"https": proxy}
+
+        # Getting data from json
+        url = "{}/v1/finance/search?q={}".format(self._base_url, self.ticker)
+        session = self.session or _requests
+        data = session.get(
+            url=url,
+            proxies=proxy,
+            headers=utils.user_agent_headers
+        )
+        if "Will be right back" in data.text:
+            raise RuntimeError("*** YAHOO! FINANCE IS CURRENTLY DOWN! ***\n"
+                               "Our engineers are working quickly to resolve "
+                               "the issue. Thank you for your patience.")
+        data = data.json()
+
+        # parse news
+        self._news = data.get("news", [])
+        return self._news
