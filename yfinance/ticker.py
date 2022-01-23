@@ -76,7 +76,7 @@ class Ticker(TickerBase):
                 proxy = proxy["https"]
             proxy = {"https": proxy}
 
-        r = _requests.get(
+        r = http.get(
             url=url,
             proxies=proxy,
             headers=utils.user_agent_headers
