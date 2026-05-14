@@ -1,6 +1,6 @@
 pandas>=0.24.0
 numpy>=1.16.5
-requests>=2.26
+requests>=2.34.2
 multitasking>=0.0.7
 torpy
 lxml>=4.5.1
